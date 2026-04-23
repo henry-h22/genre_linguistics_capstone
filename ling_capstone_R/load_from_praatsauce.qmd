@@ -1,0 +1,123 @@
+---
+title: "load_from_praatsauce"
+author: "hh"
+format: html
+---
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+loadPraatSauceGTZAN <- function(dir) {
+  full_dataframe <- data.frame(NA)
+  praatsauce_outputs <- list.files(path = dir, pattern = "\\.tsv$", full.names = TRUE)
+
+  for (tsvFile in praatsauce_outputs) {
+    
+    some_data <- read_tsv(tsvFile)
+    
+    vowel_data <- some_data %>% 
+      filter(substring(label, 0, 1) %in% c("A", "E", "I", "O", "U"))
+    
+    bad_intervals <- vowel_data %>% 
+      group_by(intervaldID) %>% 
+      count() %>% 
+      dplyr::filter(n != 9) %>% 
+      select(intervaldID)
+    
+    filtered_vowel_data <- vowel_data %>% 
+      filter(!(intervaldID %in% bad_intervals$intervaldID)) %>% 
+      mutate(timepoint = (((row_number() - 1) %% 9) + 1)) %>% 
+      filter(timepoint == 5) %>% 
+      mutate(genre = as.factor(str_replace(str_replace(file, "[0-9]+_", ""), ".wav", ""))) %>% 
+      select(!timepoint) %>%
+      select(!intervaldID)
+    
+    nominal_cols <- filtered_vowel_data %>% 
+      select(genre, file:label)
+    
+    quant_cols <- filtered_vowel_data %>% 
+      select(!file:label) %>% select(!genre) %>% 
+      mutate_all(function(x) as.numeric(as.character(x)))
+    
+    prepped_data <- cbind(nominal_cols, quant_cols)
+    
+    full_dataframe <- dplyr::bind_rows(prepped_data, full_dataframe)
+  }
+  final_return_dataframe <- full_dataframe %>% 
+    drop_na(f0) %>% 
+    select(!NA.)
+  
+  return (final_return_dataframe)
+}
+```
+
+```{r}
+#| message: false
+#| warning: false
+big_data <- loadPraatSauceGTZAN("./praatsauce_outs")
+```
+
+
+
+# Preliminary Stuff
+
+```{r}
+some_data <- read_tsv("praatsauce_outs/praatsauce_output_4-10_3.tsv")
+
+problems(some_data)
+head(some_data)
+```
+
+```{r}
+vowel_data <- some_data %>% 
+  filter(substring(label, 0, 1) %in% c("A", "E", "I", "O", "U"))
+
+head(vowel_data)
+```
+
+```{r}
+vowel_data %>% 
+  ggplot(aes(y = label)) +
+  geom_bar()
+```
+
+
+```{r}
+bad_intervals <- vowel_data %>% 
+  group_by(intervaldID) %>% 
+  count() %>% 
+  filter(n != 9) %>% 
+  select(intervaldID)
+
+nrow(bad_intervals)
+
+filtered_vowel_data <- vowel_data %>% 
+  filter(!(intervaldID %in% bad_intervals$intervaldID)) %>% 
+  mutate(timepoint = (((row_number() - 1) %% 9) + 1)) %>% 
+  filter(timepoint == 5) %>% 
+  mutate(genre = as.factor(str_replace(str_replace(file, "[0-9]+_", ""), ".wav", ""))) %>% 
+  select(!timepoint) %>% select(!intervaldID) %>% 
+  mutate(f0 = as.numeric(f0)) %>% 
+  drop_na()
+
+head(filtered_vowel_data)
+
+filtered_vowel_data %>% 
+  ggplot(aes(x = genre)) +
+  geom_bar()
+```
+
+
+### This lines exports big_data to python:
+
+```{r}
+write.csv(big_data,"~/Downloads/big_capstone_data.csv", row.names = FALSE)
+```
+
+
+
+
+
+

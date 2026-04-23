@@ -1,0 +1,452 @@
+---
+title: "svmForayCAPSTONE"
+format: html
+---
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(tidymodels)
+library(yardstick)
+library(vip)
+library(LiblineaR)
+library(ggplot2)
+library(ggpattern)
+```
+
+
+Assumes we have `full_data` from loadFromPython
+
+```{r}
+# # this is to check no information rate:
+# full_data %>%
+#   group_by(genre) %>%
+#   summarise(count = n()) %>%
+#   mutate(percentage = (count / sum(count)) * 100)
+```
+
+
+Train and test splits!!!
+
+```{r}
+filenames <- full_data %>% 
+  select(genre:file) %>% 
+  group_by(file) %>% 
+  slice_head(n = 1) %>% 
+  ungroup()
+
+# filenames
+
+set.seed(01110001+15) # "q" in binary plus 15
+split <- initial_split(filenames, prop = 0.9, strata = genre)
+
+train_data <- training(split)
+test_data  <- testing(split)
+
+train_data %>% 
+  ggplot(aes(x = genre)) +
+  geom_bar()
+
+test_data %>% 
+  ggplot(aes(x = genre)) +
+  geom_bar() +
+  ylim(c(0, 10))
+```
+
+
+```{r}
+# filter training data as singingSvmData :D
+
+full_svm_data <- full_data %>% 
+  select(!label) %>% select(!t)
+  
+singingSvmData <- full_svm_data %>% 
+  filter(file %in% train_data$file) 
+
+singingSvmData_TEST <- full_svm_data %>% 
+  filter(file %in% test_data$file)
+
+# singingSvmData
+```
+
+
+```{r}
+svm_spec <- svm_rbf(
+  cost = tune(),
+  rbf_sigma = tune()
+) %>% 
+  set_engine("kernlab") %>% 
+  set_mode("classification")
+```
+
+```{r}
+svm_recipe <- recipe(genre ~ ., data = singingSvmData) %>%
+  step_rm(file) %>% 
+  step_normalize(all_predictors())  # Centers and scales predictors
+
+  # step_classdist(all_numeric_predictors(), class = "genre", pool = T) # this line specifies Mahalanobis distance, following Mandel & Ellis (2005)
+
+# this is just cuz of how we're tuning
+svm_recipe_full <- recipe(genre ~ ., data = full_svm_data) %>%
+  step_rm(file) %>% 
+  step_normalize(all_predictors())  # Centers and scales predictors
+```
+
+```{r}
+# svm_workflow <- workflow() %>%
+#   add_recipe(svm_recipe) %>%
+#   add_model(svm_spec)
+
+svm_workflow_full <- workflow() %>%
+  add_recipe(svm_recipe_full) %>%
+  add_model(svm_spec)
+```
+
+
+```{r}
+# Here we use 5-fold CV on the whole dataset rather than just the train split, since we're just tuning stuff and not actually training our final model. Maybe that's dumb. Idrc.
+
+# !! CAREFUL THIS CELL TAKES ONE HUNDRED YEARS!!
+
+# svm_params <- parameters(
+#   cost(range = c(-5L, 5L)),
+#   rbf_sigma(range = c(-10L, 0L))
+# )
+# 
+# svm_grid <- grid_regular(svm_params, levels = 5)
+# 
+# 
+# set.seed(222)
+# 
+# svm_tune <- svm_workflow_full %>%
+#   tune_grid(
+#     resamples = vfold_cv(full_svm_data, v = 5),
+#     grid = svm_grid,
+#     metrics = metric_set(f_meas)
+#   )
+
+```
+
+```{r}
+svm_tune %>% 
+  autoplot() + 
+  scale_x_continuous()
+
+best_svm_params <- select_best(svm_tune, metric = "f_meas")
+# best_svm_params
+
+svm_tune %>% 
+  collect_metrics() %>% 
+  filter(cost == best_svm_params$cost[1]) %>% 
+  filter(rbf_sigma == best_svm_params$rbf_sigma[1])
+```
+
+The tuning process found that cost 32, rbf_sigma = 0.003162278. that gave CV f_meas 0.3567638, std_err = 0.003711886. Rad!!! (well not rad, very bad, but whatever.)
+
+
+
+# Final fit stuff (accuracy, F1, conf. mat.)
+
+```{r}
+# Finalize workflow:
+svm_workflow <- workflow() %>%
+  add_recipe(svm_recipe) %>%
+  add_model(finalize_model(svm_spec, best_svm_params))
+
+# could also manually set cost = 32 and rbf_sigma = 0.003162278 in the event of data wipage. because there's NO WORLD where we run that tuning cell again, jeez.
+```
+
+
+```{r}
+final_fit <- fit(svm_workflow, data = singingSvmData)
+```
+
+```{r}
+# in-sample final predictions
+in_sample_pred <- final_fit %>% 
+  predict(new_data = singingSvmData)
+  
+
+in_sample_pred <- in_sample_pred %>% 
+  cbind(singingSvmData)
+
+in_sample_pred
+```
+
+```{r}
+# vowel-level in-sample accuracy and conf mat:
+in_sample_pred %>% 
+  accuracy(genre, .pred_class)
+
+in_sample_pred %>% 
+  f_meas(genre, .pred_class)
+
+in_sample_pred %>% 
+  conf_mat(truth = genre, estimate = .pred_class) %>% 
+  autoplot(cm, type = "heatmap") +
+  scale_fill_gradient(low = "#fccf90", high = "#cc8016") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| message: false
+# word-level stuff (in-sample still)
+
+in_sample_word_pred <- in_sample_pred %>% 
+  group_by(file, genre, .pred_class) %>% 
+  count() %>% 
+  group_by(file) %>% 
+  arrange(desc(n), .by_group = T) %>% 
+  slice_head(n = 1) %>% 
+  ungroup() %>% 
+  select(!n)
+
+in_sample_word_pred %>% 
+  accuracy(genre, .pred_class)
+
+in_sample_word_pred %>% 
+  group_by(genre) %>% 
+  accuracy(genre, .pred_class) %>%
+  select(!.metric:.estimator)
+
+in_sample_word_pred %>% 
+  f_meas(genre, .pred_class)
+
+in_sample_word_pred %>% 
+  conf_mat(truth = genre, estimate = .pred_class) %>% 
+  autoplot(cm, type = "heatmap") +
+  scale_fill_gradient(low = "#fccf90", high = "#cc8016") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+Time for test data stuff!!
+
+```{r}
+# in-sample final predictions
+outof_sample_pred <- final_fit %>% 
+  predict(new_data = singingSvmData_TEST)
+  
+
+outof_sample_pred <- outof_sample_pred %>% 
+  cbind(singingSvmData_TEST)
+
+outof_sample_pred
+```
+
+```{r}
+# vowel-level accuracy and conf mat:
+outof_sample_pred %>% 
+  accuracy(genre, .pred_class)
+
+outof_sample_pred %>% 
+  f_meas(genre, .pred_class)
+
+outof_sample_pred %>% 
+  conf_mat(truth = genre, estimate = .pred_class) %>% 
+  autoplot(cm, type = "heatmap") +
+  scale_fill_gradient(low = "#fccf90", high = "#cc8016") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| message: false
+#| warning: false
+outof_sample_word_pred <- outof_sample_pred %>% 
+  group_by(file, genre, .pred_class) %>% 
+  count() %>% 
+  group_by(file) %>% 
+  arrange(desc(n), .by_group = T) %>% 
+  slice_head(n = 1) %>% 
+  ungroup() %>% 
+  select(!n)
+
+outof_sample_word_pred %>% 
+  accuracy(genre, .pred_class)
+
+outof_sample_word_pred %>% 
+  group_by(genre) %>% 
+  accuracy(genre, .pred_class) %>% 
+  select(!.metric:.estimator)
+
+outof_sample_word_pred %>% 
+  f_meas(genre, .pred_class)
+
+outof_sample_word_pred %>% 
+  conf_mat(truth = genre, estimate = .pred_class) %>% 
+  autoplot(cm, type = "heatmap") +
+  scale_fill_gradient(low = "#fccf90", high = "#cc8016") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+
+```{r}
+outof_sample_pred %>% 
+  ggplot(aes(x = .pred_class, y = QR, color = .pred_class)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+outof_sample_pred %>% 
+  ggplot(aes(x = .pred_class, y = H1H2c, color = .pred_class)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+outof_sample_pred %>% 
+  ggplot(aes(x = .pred_class, y = CPP, color = .pred_class)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# old
+
+
+
+```{r}
+in_sample_confusion <- final_fit %>%
+  augment(new_data = singingSvmData) %>% 
+  conf_mat(truth = genre, estimate = .pred_class)
+
+in_sample_confusion
+
+genre_label = rep(colnames(in_sample_confusion$table), ncol(in_sample_confusion$table))
+in_sample_confusion %>% 
+  autoplot() +    
+  aes(fill = genre_label) + 
+  scale_fill_manual(values = c("#000000", "darkgray", "red", "#7570B3", "lightgreen", "blue", "#E6AB02", "brown", "#66A61E"))
+```
+
+
+
+```{r}
+# Dig into the tidymodels object to extract the raw LiblineaR engine
+engine_fit <- extract_fit_engine(final_fit)
+
+# Extract the weights matrix (W)
+# The columns are your features, and the last column ('Bias') is the intercept.
+# cat("\n--- Underlying SVM Weights ---\n")
+# weights
+# If you want to format it nicely into a dataframe:
+weights <- engine_fit$W
+(weights_df <- as.data.frame(weights))
+
+# 1. Grab the row names (which are your class levels) before pivoting
+weights_df <- as.data.frame(weights) %>%
+  rownames_to_column(var = "Class")
+
+# 2. Pivot the data, but keep the 'Class' column intact
+plot_data <- weights_df %>%
+  select(-Bias) %>% # Still dropping the intercept
+  pivot_longer(
+    cols = -Class, # Pivot all columns EXCEPT Class
+    names_to = "Feature", 
+    values_to = "Weight"
+  ) %>%
+  mutate(Direction = ifelse(Weight > 0, "Positive", "Negative"))
+# 
+# # my_custom_order <- c("CQ", "SQ", "Contact Duration", "Decontact Duration", "PIC", "PDC", "H1-H2c", "H2-H4c", "H1-A1c", "H1-A2c", "H1-A3c", "F0", "CPP", "Energy")
+# 
+# my_custom_order <- c("PC1", "PC2", "PC3", "PC4", "CQ", "SQ", "Contact Duration", "Decontact Duration", "PIC", "PDC", "H1-H2c", "H2-H4c", "H1-A1c", "H1-A2c", "H1-A3c", "F0", "CPP", "Energy")
+# 
+# plot_data <- plot_data %>% 
+#   mutate(Feature = factor(
+#     case_match(
+#       Feature,
+#       "CQ_H" ~ "CQ",
+#       "SQ" ~ "SQ",
+#       "SQ2_SQ1" ~ "Contact Duration",
+#       "SQ4_SQ3" ~ "Decontact Duration",
+#       "peak_Vel" ~ "PIC",
+#       "min_Vel" ~ "PDC",
+#       "H1H2c" ~ "H1-H2c",
+#       "H2H4c" ~ "H2-H4c",
+#       "H1A1c" ~ "H1-A1c",
+#       "H1A2c" ~ "H1-A2c",
+#       "H1A3c" ~ "H1-A3c",
+#       "strF0" ~ "F0",
+#       "CPP" ~ "CPP",
+#       "Energy" ~ "Energy",
+#       "PC1" ~ "PC1",
+#       "PC2" ~ "PC2",
+#       "PC3" ~ "PC3",
+#       "PC4" ~ "PC4"
+#     ), 
+#     levels = rev(my_custom_order)
+#   ))
+
+# --- STEP 1: DEFINE CUSTOM Y-AXIS ORDER ---
+# List your features exactly as you want them to read from TOP to BOTTOM
+
+
+# Convert to factor and reverse the order so the first item plots at the top
+# plot_data$Feature <- factor(plot_data$Feature, levels = rev(my_custom_order))
+
+```
+
+
+```{r fig.height=15, fig.width=10}
+
+
+# --- STEP 2: PLOT THE DATA ---
+ggplot(plot_data, aes(x = Weight, y = Feature, fill = Direction)) +
+  
+  # Use geom_col_pattern instead of geom_col
+  geom_col_pattern(
+    aes(pattern = Direction),
+    color = "black",            # Adds a black outline to the bars
+    pattern_fill = "black",     # Color of the pattern (dots/stripes)
+    pattern_density = 0.1,      # How dense the pattern is
+    pattern_spacing = 0.05      # Space between pattern lines/dots
+  ) + 
+  
+  # Set the patterns (circle = dotted, stripe = striped)
+  scale_pattern_manual(values = c("Positive" = "stripe", "Negative" = "circle")) +
+  
+  # Change the base fill to colorblind/B&W friendly grays
+  scale_fill_manual(values = c("Positive" = "gray77", "Negative" = "gray45")) +
+  
+  facet_wrap(~ Class, scales = "free_x") + 
+  theme_minimal() +
+  
+  # --- STEP 3: CONTROL TEXT SIZES ---
+  theme(
+    legend.position = "none",
+    
+    # Global text size baseline
+    text = element_text(size = 12),              
+    
+    # Specific text element controls (adjust numbers as needed)
+    axis.title = element_text(size = 14, face = "bold"), # "Weight" and "Feature"
+    axis.text = element_text(size = 11),                 # The actual numbers/feature names
+    strip.text = element_text(size = 13, face = "bold")  # The facet labels above each panel
+  ) +
+
+  labs(title = "← Negative                         Positive →") +
+  
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold")
+  )
+```
+
+
+
+

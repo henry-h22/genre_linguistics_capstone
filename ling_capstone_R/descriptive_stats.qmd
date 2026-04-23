@@ -1,0 +1,105 @@
+---
+title: "descriptive_stats"
+format: html
+---
+
+assumes a lot of data and packages have been loaded! sorry bout it!
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(tidymodels)
+library(yardstick)
+library(vip)
+library(LiblineaR)
+library(ggplot2)
+library(ggpattern)
+```
+
+```{r}
+singingSvmData %>% 
+  ggplot(aes(x = genre, y = f0, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+singingSvmData %>% 
+  ggplot(aes(x = genre, y = CPP, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+singingSvmData %>% 
+  ggplot(aes(x = genre, y = H1H2c, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+```
+
+
+```{r}
+big_data %>% 
+  ggplot(aes(x = genre, y = f0, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+big_data %>% 
+  ggplot(aes(x = genre, y = CPP, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+big_data %>% 
+  ggplot(aes(x = genre, y = H1H2c, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+big_data %>% 
+  ggplot(aes(x = genre, y = H1c, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+```
+
+```{r}
+full_data %>% 
+  filter(QR < 3) %>% 
+  ggplot(aes(x = QR)) +
+  geom_density()
+
+
+full_data %>% 
+  # filter(QR > 0) %>% 
+  filter(QR < 10) %>%
+  ggplot(aes(x = genre, y = QR, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+full_data %>% 
+  # filter(QR > 0) %>% 
+  # filter(QR < 10) %>%
+  ggplot(aes(x = genre, y = H1H2c, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+
+full_data %>% 
+  # filter(QR > 0) %>% 
+  filter(QR < 50) %>%
+  ggplot(aes(x = QR, fill = genre)) +
+  geom_density(alpha = 0.36)
+```
+
+
+
+```{r}
+big_data %>% 
+  group_by(file) %>% 
+  count() %>% 
+  nrow()
+
+big_data %>% 
+  ggplot(aes(x = file, fill = genre)) +
+  geom_bar()
+```
+
+
+
+
+

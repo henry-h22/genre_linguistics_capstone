@@ -1,0 +1,130 @@
+---
+title: "loadFromPython"
+format: html
+---
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(tidymodels)
+library(yardstick)
+library(vip)
+library(LiblineaR)
+library(ggplot2)
+library(ggpattern)
+```
+
+```{r}
+full_data <- read_csv("./QR_data.csv") %>% 
+  mutate(genre = as.factor(genre))
+```
+
+
+```{r}
+# this cell filters out QR values we don't like
+
+nrow(full_data)
+
+full_data_QRfiltered <- full_data %>% 
+  mutate(zQR = as.numeric(scale(QR))) %>% 
+  filter(zQR < 2) %>% 
+  mutate(logQR = log(QR))
+
+nrow(full_data_QRfiltered)
+
+full_data_QRfiltered %>% 
+  ggplot(aes(x = logQR, fill = genre)) +
+  geom_density(alpha = 0.22)
+
+full_data_QRfiltered %>% 
+  ggplot(aes(x = genre, y = logQR, color = genre)) +
+  geom_boxplot() +
+  theme(legend.position="none")
+
+full_data <- full_data_QRfiltered %>% 
+  mutate(QR = logQR) %>% 
+  select(!logQR)
+```
+
+```{r}
+# this cell filters out FILES that had too few vowels
+
+file_counts <- full_data %>% 
+  drop_na() %>% 
+  group_by(file) %>% 
+  # group_by(genre) %>% 
+  count()
+
+n_mean <- mean(file_counts$n)
+n_sd <- sd(file_counts$n)
+
+file_counts$z_n <- (file_counts$n - n_mean) / n_sd
+  
+file_counts
+
+file_counts %>% 
+  ggplot(aes(x = z_n)) +
+  geom_density() +
+  geom_vline(xintercept = 2, linetype = 2, color = 'red') +
+  geom_vline(xintercept = (10 - n_mean) / n_sd, linetype = 2, color = 'red')
+
+# create a list of files that have a number of vowels within 2 standard deviations from the mean:
+okay_files_df <- file_counts %>%
+  filter(n > 10) %>% # minimum number of vowels for a file: 10
+  filter(z_n < 2) %>% # no more than 2 standard deviations above the mean
+  select(file)
+
+okay_files <- okay_files_df$file
+# okay_files
+
+nrow(full_data)
+
+full_data_FileFiltered <- full_data %>% 
+  filter(file %in% okay_files)
+
+nrow(full_data_FileFiltered)
+
+
+full_data_FileFiltered %>% 
+  drop_na() %>% 
+  filter(genre == "hiphop") %>% 
+  ggplot(aes(x = file)) +
+  geom_bar()
+
+full_data_FileFiltered %>% 
+  drop_na() %>% 
+  filter(genre == "metal") %>% 
+  ggplot(aes(x = file)) +
+  geom_bar()
+
+full_data <- full_data_FileFiltered
+```
+
+TODO!!!: check how many vowels PER FILE hiphop has, remove some amount of vowels PER FILE please!!
+
+(the code above *removes* files that have too many vowels.... should we just mark those for heavy downsampling?? and then be more agressive w/ the threshold (e.g. 1.5 standard deviatios?)). lots to consider.
+
+
+
+```{r}
+# rm stuff we don't need
+rm(full_data_QRfiltered)
+rm(file_counts)
+rm(full_data_FileFiltered)
+rm(okay_files_df)
+```
+
+
+# The rest of this file is just random checks and things
+
+```{r}
+full_data %>% 
+  ggplot(aes(x = genre)) +
+  geom_bar()
+
+# so like... we still need to downsample 
+```
+
+
+
